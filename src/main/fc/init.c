@@ -1018,5 +1018,9 @@ void init(void)
 
     tasksInit();
 
+#ifdef SIMULATOR_MULTITHREAD
+    rescheduleTask(TASK_SERIAL, 1);
+#endif
+
     systemState |= SYSTEM_STATE_READY;
 }
