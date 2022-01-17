@@ -60,7 +60,6 @@ const timerHardware_t timerHardware[1]; // unused
 uint32_t SystemCoreClock;
 
 static fdm_packet fdmPkt;
-static servo_packet pwmPkt;
 static rc_packet rcPkt;
 static servo_packet_raw pwmRawPkt;
 
@@ -71,7 +70,7 @@ static struct timespec start_time;
 static double simRate = 1.0;
 static pthread_t tcpWorker, udpWorker, udpWorkerRC;
 static bool workerRunning = true;
-static udpLink_t stateLink, pwmLink, pwmRawLink, rcLink;
+static udpLink_t stateLink, pwmRawLink, rcLink;
 static pthread_mutex_t updateLock;
 static pthread_mutex_t mainLoopLock;
 static char simulator_ip[1024] = "127.0.0.1";
@@ -90,10 +89,6 @@ int lockMainPID(void) {
 #define PORT_OUT_PWM 9002
 #define PORT_IN_STATE 9003
 #define PORT_IN_RC 9004
-
-void sendMotorUpdate() {
-    udpSend(&pwmLink, &pwmPkt, sizeof(servo_packet));
-}
 
 int sitl_parse_argc(int argc, char * argv[]) {
     //The first argument should be target IP.
@@ -118,7 +113,6 @@ void updateState(const fdm_packet* pkt) {
     if (realtime_now > last_realtime + 500*1e3) { // 500ms timeout
         last_timestamp = pkt->timestamp;
         last_realtime = realtime_now;
-        sendMotorUpdate();
         return;
     }
 
@@ -208,7 +202,6 @@ static void* udpThread(void* data) {
             if (!fdm_received) {
                 printf("[SITL] new fdm %d t:%f from %s:%d\n", n, fdmPkt.timestamp, inet_ntoa(stateLink.recv.sin_addr), stateLink.recv.sin_port);
                 fdm_received = true;
-                // pwmLink.si.sin_addr = stateLink.recv.sin_addr;
             }
             updateState(&fdmPkt);
         }
@@ -296,9 +289,6 @@ void systemInit(void) {
         printf("[SITL] Create tcpWorker error!\n");
         exit(1);
     }
-
-    ret = udpInit(&pwmLink, simulator_ip, PORT_OUT_PWM, false);
-    printf("[SITL] init PwmOut UDP link to gazebo %s:%d...%d\n", simulator_ip, PORT_OUT_PWM, ret);
 
     ret = udpInit(&pwmRawLink, simulator_ip, PORT_OUT_PWM_RAW, false);
     printf("[SITL] init PwmOut UDP link to RF9 %s:%d...%d\n", simulator_ip, PORT_OUT_PWM_RAW, ret);
@@ -459,8 +449,6 @@ pwmOutputPort_t motors[MAX_SUPPORTED_MOTORS];
 static pwmOutputPort_t servos[MAX_SUPPORTED_SERVOS];
 
 // real value to send
-static int16_t motorsPwm[MAX_SUPPORTED_MOTORS];
-static int16_t servosPwm[MAX_SUPPORTED_SERVOS];
 static int16_t idlePulse = 1000;
 
 void servoDevInit(const servoDevConfig_t *servoConfig, uint8_t servoCount) {
@@ -492,7 +480,9 @@ static bool pwmEnableMotors(void)
 
 static void pwmWriteMotor(uint8_t index, float value)
 {
-    motorsPwm[index] = value - idlePulse;
+    if (index < pwmRawPkt.motorCount) {
+        pwmRawPkt.pwm_output_raw[index] = value;
+    }
 }
 
 static void pwmWriteMotorInt(uint8_t index, uint16_t value)
@@ -516,27 +506,29 @@ static void pwmCompleteMotorUpdate(void)
 
     double outScale = 1000.0;
 
-    pwmPkt.motor_speed[3] = motorsPwm[0] / outScale;
-    pwmPkt.motor_speed[0] = motorsPwm[1] / outScale;
-    pwmPkt.motor_speed[1] = motorsPwm[2] / outScale;
-    pwmPkt.motor_speed[2] = motorsPwm[3] / outScale;
-
-    // get one "fdm_packet" can only send one "servo_packet"!!
     if (pthread_mutex_trylock(&updateLock) != 0) return;
-    udpSend(&pwmLink, &pwmPkt, sizeof(servo_packet));
     udpSend(&pwmRawLink, &pwmRawPkt, sizeof(servo_packet_raw));
-    // printf("[pwm]%u:%f,%f,%f,%f\n", idlePulse, pwmRawPkt.pwm_output_raw[0], 
-        // pwmRawPkt.pwm_output_raw[1], pwmRawPkt.pwm_output_raw[2], pwmRawPkt.pwm_output_raw[3]);
+    // static int c = 0;
+    // if (c++%50 == 1) 
+    //     printf("[SITL][pwm]%u:%07.1f,%07.1f,%07.1f,%07.1f\n", idlePulse, pwmRawPkt.pwm_output_raw[0], 
+    //         pwmRawPkt.pwm_output_raw[1], pwmRawPkt.pwm_output_raw[2], pwmRawPkt.pwm_output_raw[3]);
 }
 
 void pwmWriteServo(uint8_t index, float value) {
-    servosPwm[index] = value;
     if (index + pwmRawPkt.motorCount < SIMULATOR_MAX_PWM_CHANNELS) {
         pwmRawPkt.pwm_output_raw[index + pwmRawPkt.motorCount] = value; // In pwmRawPkt, we put servo right after the motors.
     }
 }
 
-uint16_t motorConvertToInternalNull(float value);
+static uint16_t SITLConvertToInternal(float motorValue) {
+    uint16_t internalValue;
+    if (motorValue > 0)
+        internalValue = scaleRangef(motorValue, 0, 1, motorConfig()->minthrottle, motorConfig()->maxthrottle);
+    else
+        internalValue = motorConfig()->mincommand;
+
+    return internalValue;
+}
 
 static motorDevice_t motorPwmDevice = {
     .vTable = {
@@ -549,7 +541,7 @@ static motorDevice_t motorPwmDevice = {
         .writeInt = pwmWriteMotorInt,
         .updateComplete = pwmCompleteMotorUpdate,
         .shutdown = pwmShutdownPulsesForAllMotors,
-        .convertMotorToInternal = motorConvertToInternalNull
+        .convertMotorToInternal = SITLConvertToInternal
     }
 };
 

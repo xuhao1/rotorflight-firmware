@@ -1,52 +1,4 @@
 # SITL
-## SITL in gazebo 8 with ArduCopterPlugin
-SITL (software in the loop) simulator allows you to run betaflight/cleanflight without any hardware.
-Currently only tested on Ubuntu 16.04, x86_64, gcc (Ubuntu 5.4.0-6ubuntu1~16.04.4) 5.4.0 20160609.
-
-### install gazebo 8
-see here: [Installation](http://gazebosim.org/tutorials?cat=install)
-
-### copy & modify world
-for Ubunutu 16.04:
-`cp /usr/share/gazebo-8/worlds/iris_arducopter_demo.world .`
-
-change `real_time_update_rate` in `iris_arducopter_demo.world`:
-`<real_time_update_rate>0</real_time_update_rate>`
-to
-`<real_time_update_rate>100</real_time_update_rate>`
-***this suggest set to non-zero***
-
-`100` mean what speed your computer should run in (Hz).
-Faster computer can set to a higher rate.
-see [here](http://gazebosim.org/tutorials?tut=modifying_world&cat=build_world#PhysicsProperties) for detail.
-`max_step_size` should NOT higher than `0.0025` as I tested.
-smaller mean more accurate, but need higher speed CPU to run as realtime.
-
-### build betaflight
-run `make TARGET=SITL`
-
-### settings
-to avoid simulation speed slow down, suggest to set some settings belows:
-
-In `configuration` page:
-
-1. `ESC/Motor`: `PWM`, disable `Motor PWM speed Sparted from PID speed`
-2. `PID loop frequency` as high as it can.
-
-### start and run
-1. start betaflight: `./obj/main/betaflight_SITL.elf`
-2. start gazebo: `gazebo --verbose ./iris_arducopter_demo.world`
-4. connect your transmitter and fly/test, I used a app to send `MSP_SET_RAW_RC`, code available [here](https://github.com/cs8425/msp-controller).
-
-### note
-betaflight	->	gazebo	`udp://127.0.0.1:9002`
-gazebo	->	betaflight	`udp://127.0.0.1:9003`
-
-UARTx will bind on `tcp://127.0.0.1:576x` when port been open.
-
-`eeprom.bin`, size 8192 Byte, is for config saving.
-size can be changed in `src/main/target/SITL/pg.ld` >> `__FLASH_CONFIG_Size`
-
 ## SITL in RealFlight 9
 
 [RealFlight](https://www.realflight.com/) is one of the best commercial RC simulators with accurate airplane, helicopter, and multirotor simulations.
@@ -142,3 +94,27 @@ To running SITL, you may need to:
 
 ## Customize
 If you want to create your own model and extend the SITL, please refer to this [guide](http://www.knifeedge.com/KEmax/) and this [document](https://github.com/xuhao1/RealFlightBridge/blob/main/docs/realflight_protocol.md).
+
+## Known issues:
+- RC SMOOTHING not work with SITL now, In 
+```c
+static FAST_CODE uint8_t processRcSmoothingFilter(void)
+```
+It will cause NaN.
+
+## Mixer for "H-1" swash with single motor in SITL
+```bash
+# mixer input
+mixer input ST 0 1000 1000
+
+# mixer rule
+mixer rule 0 set SR S1 1000 0 
+mixer rule 1 set SP S2 1000 0 
+mixer rule 2 set SC S3 1000 0 
+mixer rule 3 set SY S4 -1000 0 
+mixer rule 4 set ST M1 1000 0 
+```
+## Preset configs
+[Raptor720](./RF_diff_90.txt)
+
+[SAB GOBLIN 570](./RF_diff_570.txt)
