@@ -152,6 +152,9 @@ void resetArmingDisabled(void)
 #ifdef USE_ACC
 static bool accNeedsCalibration(void)
 {
+#ifdef SIMULATOR_MULTITHREAD
+    return false;
+#endif
     if (sensors(SENSOR_ACC)) {
 
         // Check to see if the ACC has already been calibrated
